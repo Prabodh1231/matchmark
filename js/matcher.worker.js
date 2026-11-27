@@ -11,6 +11,7 @@ import {
   findSharedTrigrams,
 } from "./matching.js";
 import { buildPageBoundaries } from "./passages.js";
+import { joinTextItems } from "./pdf-text.js";
 import { fileHash, readCachedPages, saveCachedPage } from "./ocr-cache.js";
 import { containsImages } from "./scan-detect.js";
 
@@ -217,7 +218,8 @@ async function readTextLayers(pdf, hasImages) {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    const text = content.items.map((item) => item.str || "").join(" ");
+    // Items are pieces of text, not words: see joinTextItems
+    const text = joinTextItems(content.items);
     const scanned = hasImages && (text.match(/[a-z0-9]/gi) || []).length < MIN_TEXT_CHARS;
     pages.push({ text, scanned });
     page.cleanup();
