@@ -385,19 +385,80 @@ export function exclusionSummary(words = [], settings = DEFAULT_SETTINGS) {
   };
 }
 
+/* ---------- Words: what counts as one, and how it is compared ---------- */
+
+// Characters that hold a word together wherever they appear: apostrophes
+// (don't, O\u2019Brien, \u201890s), the soft hyphen and invisible joiners
+const JOINERS = "'\u2019\u02bc\u2018\u00ad\u200c\u200d\u2060\ufeff";
+const WORD_CHARS = String.raw`\p{L}\p{M}\p{N}${JOINERS}`;
+// One word: letters, combining marks and digits, plus joiners, with hyphens
+// allowed between them (state-of-the-art). Anything else between two words,
+// such as a dash, slash, full stop or bracket, separates them, so
+// "flood\u2014which" is two words, as "flood \u2014 which" is.
+const WORD_RUN = new RegExp(`[${WORD_CHARS}]+(?:[-\u2010\u2011][${WORD_CHARS}]+)*`, "gu");
+
 /**
- * Normalises text for comparison: strips accents and punctuation,
- * collapses whitespace and lowercases.
+ * One word as it is compared: accents (on Latin letters), joiners, hyphens
+ * and case removed. Combining marks of other scripts are kept, so
+ * Devanagari vowel signs, for example, stay part of their word.
+ */
+function normalizeWord(raw) {
+  return raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\p{L}\p{M}\p{N}]/gu, "")
+    .toLowerCase();
+}
+
+/** The compared words of some text, in order. */
+function wordsOf(text) {
+  const words = [];
+  for (const match of String(text).matchAll(WORD_RUN)) {
+    const word = normalizeWord(match[0]);
+    if (word) words.push(word);
+  }
+  return words;
+}
+
+/**
+ * Normalises text for comparison: one space between words, each word
+ * lowercased and stripped of accents, apostrophes and hyphens ("Don't",
+ * "state-of-the-art" -> "dont", "stateoftheart"). Other punctuation
+ * separates words ("and/or" -> "and or").
  * @param {string} text
  * @returns {string}
  */
 export function cleanWord(text) {
-  return text
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]|[^\p{L}\p{N}\s]/gu, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
+  return wordsOf(text).join(" ");
+}
+
+/**
+ * Splits text with no whitespace (one whitespace-delimited part of the
+ * manuscript) into its words and the punctuation between them, by the same
+ * rule as tokenizeText, so both sides of a comparison see the same words.
+ * Punctuation before the first word or after the last stays with that word.
+ * @param {string} part
+ * @returns {Array<{text: string, word: string}>} Pieces that join back into
+ *   the part; word is the compared word, or "" for punctuation between words
+ */
+export function splitWords(part) {
+  const text = String(part);
+  const pieces = [];
+  let last = 0;
+  for (const match of text.matchAll(WORD_RUN)) {
+    const word = normalizeWord(match[0]);
+    if (!word) continue; // joiners alone: punctuation
+    const before = text.slice(last, match.index);
+    if (pieces.length === 0) pieces.push({ text: before + match[0], word });
+    else {
+      if (before) pieces.push({ text: before, word: "" });
+      pieces.push({ text: match[0], word });
+    }
+    last = match.index + match[0].length;
+  }
+  if (pieces.length === 0) return [{ text, word: "" }];
+  pieces[pieces.length - 1].text += text.slice(last);
+  return pieces;
 }
 
 // Stored in cleaned form ("don't" -> "dont") so they match cleaned text
@@ -434,8 +495,7 @@ export const STOP_WORDS = new Set(
  */
 export function tokenizeText(text) {
   // Join words split by a line-break hyphen ("exam-\nple" -> "example")
-  const cleaned = cleanWord(text.replace(/(\p{L})-\s+(\p{L})/gu, "$1$2"));
-  return cleaned ? cleaned.split(" ") : [];
+  return wordsOf(String(text).replace(/(\p{L})-\s+(\p{L})/gu, "$1$2"));
 }
 
 /**
