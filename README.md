@@ -249,6 +249,12 @@ All steps live in [js/matching.js](js/matching.js).
    sides see the same words. Ligatures and other compatibility forms are
    unfolded first, so a PDF's "ﬁnancial" or "buﬀer" (single ligature
    characters) reads as "financial" or "buffer", as do full-width letters.
+   A PDF page's text is rebuilt from PDF.js's text items (`js/pdf-text.js`):
+   items are pieces of text, not words, so they are joined as they are, with
+   a line break at each line end. PDF.js marks the spaces between words, so a
+   word split by a font change ("Hel" + bold "lo") or a large first letter
+   stays one word. A space is still added before raised or lowered text, such
+   as a footnote marker, and where text is drawn twice or out of order.
 2. **Window overlap (main signal).** The manuscript is cut into overlapping
    13-word windows and each PDF into 11-word windows. Repeated words count once,
    but every occurrence is remembered. When a manuscript window and a PDF window
@@ -295,6 +301,7 @@ js/navigate.js           match-navigator passages, wrap-around, shortcuts (pure 
 js/export.js             CSV/JSON serialisation of a report (pure functions)
 js/ocr-cache.js          remembers OCR text per page in IndexedDB
 js/scan-detect.js        finds whether a PDF contains images, from its raw bytes
+js/pdf-text.js           rebuilds a page's text from PDF.js text items (pure functions)
 js/vendor/               PDF.js 4.6.82, Mammoth, Tesseract.js 6.0.1 (core 6.1.2, English data)
 tests/matching.test.mjs  unit tests, including exact checks against brute force across settings
 samples/                 the bundled manuscript and PDFs loaded by "Try a sample"
@@ -304,6 +311,7 @@ tests/navigate.test.mjs  navigator grouping, wrap-around, position keeping, shor
 tests/export.test.mjs    JSON/CSV export, including formula-injection guards
 tests/intake.test.mjs    folder walking (nested, batched, unreadable files) and sorting
 tests/scan-detect.test.mjs  image detection, including real fixture PDFs
+tests/pdf-text.test.mjs  joining text items: split words, line ends, footnote markers
 tests/make_fixtures.py   builds sample files (scanned ones need Pillow)
 ```
 
