@@ -397,15 +397,22 @@ const WORD_CHARS = String.raw`\p{L}\p{M}\p{N}${JOINERS}`;
 // "flood\u2014which" is two words, as "flood \u2014 which" is.
 const WORD_RUN = new RegExp(`[${WORD_CHARS}]+(?:[-\u2010\u2011][${WORD_CHARS}]+)*`, "gu");
 
+const JOINER = new RegExp(`[${JOINERS}]`, "gu");
+
 /**
  * One word as it is compared: accents (on Latin letters), joiners, hyphens
  * and case removed. Combining marks of other scripts are kept, so
  * Devanagari vowel signs, for example, stay part of their word.
+ *
+ * Compatibility forms are unfolded first (NFKD), so a PDF's ligatures read
+ * as their letters ("\ufb01nancial", "bu\ufb00er" -> "financial", "buffer"), as do
+ * full-width letters, the long s and the like.
  */
 function normalizeWord(raw) {
   return raw
-    .normalize("NFD")
+    .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(JOINER, "") // \u02bc (U+02BC) is a letter to Unicode, so remove joiners by name
     .replace(/[^\p{L}\p{M}\p{N}]/gu, "")
     .toLowerCase();
 }
