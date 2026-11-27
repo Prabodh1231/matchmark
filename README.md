@@ -178,7 +178,7 @@ app keeps each source's cleaned text after a comparison for this.
 | Only phrases unique to one source | on | Off credits a shared phrase to every source containing it |
 | Ignore lone common words | on | Unmark a lone "the"/"of" next to a real passage |
 | Ignore the reference list | on | A section headed References / Bibliography / Works Cited / Reference List / Sources / Literature Cited (a heading, or a short standalone bold paragraph) is neither highlighted nor counted, provided most of its entries read as citations (see below) |
-| Ignore quoted text | off | Words inside quotation marks or block quotes are neither highlighted nor counted |
+| Ignore quoted text | off | Words inside quotation marks or block quotes are neither highlighted nor counted (see below for how marks are matched) |
 | Moderate from / High from | 10% / 25% | Where the level labels change; applied instantly, no re-match |
 
 - Sources keep their number, colour, pattern and on/off state while you adjust.
@@ -217,6 +217,24 @@ bold "References" line, or a body section titled "Sources", is still counted.
   checked.
 - Every reference list in the manuscript is found, such as one at the end of
   each chapter.
+
+### What counts as quoted text
+
+Quotation marks are matched within each paragraph (`findQuotedParts` in
+`js/matching.js`), and a quotation counts only once its closing mark is
+found, so a stray or unmatched mark never hides the text after it.
+
+- “…” and «…» are double quotations, ‘…’ and '…' single ones. A closing mark
+  closes the nearest open quotation of its own kind, so ‘yes’ inside “…” is
+  nested rather than ending the outer quotation.
+- A straight `"` opens after a space or bracket and closes after text. One
+  that looks like a closing mark with nothing open, such as the inch mark in
+  `12"`, is ignored.
+- Apostrophes (don’t, O’Brien), elisions (‘90s, ’em) and plural possessives
+  (the students’ work) open and close nothing.
+- A quotation over several paragraphs, where each paragraph reopens with “
+  and only the last closes, counts as quoted throughout.
+- Everything inside a block quote counts as quoted, whatever its marks.
 
 ## How matching works
 

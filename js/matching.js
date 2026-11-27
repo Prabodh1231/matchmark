@@ -238,29 +238,115 @@ export function referenceBlockFlags(blocks = []) {
   return flags;
 }
 
+const isWordChar = (char) => char !== undefined && /[\p{L}\p{N}]/u.test(char);
+const isDigit = (char) => char !== undefined && /\p{N}/u.test(char);
+// What may sit right before an opening straight quote: a space, the start, a bracket or dash
+const beforeOpening = (char) => char === undefined || /[\s([{—–-]/u.test(char);
+// What may sit right after a closing straight quote: a space, the end, punctuation
+const afterClosing = (char) => char === undefined || /[\s.,;:!?)\]}—–-]/u.test(char);
+
 /**
- * Updates a running quotation state for one whitespace-delimited part and
- * says whether a word in that part sits inside quotation marks. Handles
- * straight double quotes and curly/angle quotes; a blockquote is handled by
- * the caller. The state object is mutated: quoteFlagForPart(part, state).
- * @param {string} part
- * @param {{open: boolean}} state
+ * Finds which pieces of one paragraph sit inside quotation marks. A
+ * quotation counts only once its closing mark is found in the same
+ * paragraph, so a stray or unmatched mark never hides the text after it.
+ *
+ * - “…” and «…» are double quotations; ‘…’ and '…' single ones. Each closing
+ *   mark closes the nearest open quotation of its own kind, so ‘yes’ inside
+ *   “…” is nested rather than ending the outer quotation.
+ * - A straight " opens or closes by position: after a space or bracket and
+ *   before text it opens, after text it closes. A closing-shaped mark with
+ *   nothing open (an inch mark: 12") is ignored.
+ * - ’ or ' between two letters is an apostrophe (don’t, O’Brien); after a
+ *   space it is an elision (’90s, ’em); after a word with no single
+ *   quotation open it is a possessive (the students’ work). ‘ before a digit
+ *   is an elision too (‘90s). None of these open or close anything.
+ * - A blockquote is handled by the caller.
+ *
+ * @param {string[]} pieces - The paragraph's text in order, whitespace pieces
+ *   included, so that pieces.join("") is the paragraph
+ * @returns {{quoted: boolean[], unclosed: boolean[]}} Per piece: quoted is
+ *   inside a quotation closed in this paragraph; unclosed is inside a double
+ *   quotation still open at the end, which counts only if the next paragraph
+ *   continues it (see continuesQuotation)
  */
-export function quoteFlagForPart(part, state = { open: false }) {
-  let quoted = false;
-  for (const char of String(part)) {
-    if (char === "“" || char === "«" || char === "‘") state.open = true;
-    else if (char === "”" || char === "»" || char === "’") state.open = false;
-    else if (char === '"') state.open = !state.open;
-    else if (/[\p{L}\p{N}]/u.test(char) && state.open) quoted = true;
-  }
-  return quoted;
+export function findQuotedParts(pieces = []) {
+  const list = Array.from(pieces, (piece) => String(piece));
+  const text = list.join("");
+  const stack = []; // open quotations: {id, double, straight}
+  const closed = new Set();
+  const active = list.map(() => new Set()); // ids open around each piece's letters
+  let nextId = 0;
+
+  const open = (double, straight) => stack.push({ id: nextId++, double, straight });
+  const close = (matches) => {
+    for (let j = stack.length - 1; j >= 0; j--) {
+      if (!matches(stack[j])) continue;
+      closed.add(stack[j].id);
+      stack.length = j; // anything opened inside it and left open ends here too
+      return true;
+    }
+    return false;
+  };
+  const singleOpen = () => stack.some((entry) => !entry.double);
+
+  let at = 0;
+  list.forEach((piece, p) => {
+    for (let k = 0; k < piece.length; k++, at++) {
+      const char = piece[k];
+      const before = text[at - 1];
+      const after = text[at + 1];
+      if (char === "“" || char === "«") open(true, false);
+      else if (char === "”" || char === "»") close((entry) => entry.double && !entry.straight);
+      else if (char === '"') {
+        const opens = beforeOpening(before) && !afterClosing(after);
+        const closes = !beforeOpening(before) && afterClosing(after);
+        const straightOpen = (entry) => entry.double && entry.straight;
+        if (opens) open(true, true);
+        else if (closes) close(straightOpen);
+        else if (!close(straightOpen)) open(true, true); // " on its own, or between letters
+      } else if (char === "‘" || char === "'" || char === "’") {
+        const straight = char === "'";
+        if (isWordChar(before) && isWordChar(after)) continue; // apostrophe
+        if (char !== "’" && beforeOpening(before) && isWordChar(after) && !isDigit(after)) {
+          open(false, straight);
+        } else if (char !== "‘" && !beforeOpening(before) && singleOpen()) {
+          close((entry) => !entry.double && entry.straight === straight);
+        }
+        // Otherwise an elision or possessive: nothing opens or closes
+      } else if (stack.length && isWordChar(char)) {
+        for (const entry of stack) active[p].add(entry.id);
+      }
+    }
+  });
+
+  const pendingDouble = new Set(stack.filter((entry) => entry.double).map((entry) => entry.id));
+  const quoted = active.map((ids) => Array.from(ids).some((id) => closed.has(id)));
+  const unclosed = active.map(
+    (ids, p) => !quoted[p] && Array.from(ids).some((id) => pendingDouble.has(id))
+  );
+  return { quoted, unclosed };
 }
 
-/** Quoted flags for a sequence of whitespace-delimited parts. */
+/**
+ * Whether a paragraph opens with an opening double quotation mark. A
+ * quotation running over several paragraphs repeats the opening mark on
+ * each one and closes only at the end, so the paragraph before it counts as
+ * quoted too.
+ * @param {string} text
+ */
+export function continuesQuotation(text = "") {
+  return /^\s*(?:[“«]|"(?=[^\s"]))/u.test(String(text));
+}
+
+/**
+ * Quoted flags for the whitespace-delimited parts of one paragraph.
+ * @param {string[]} parts
+ * @returns {boolean[]}
+ */
 export function markQuotedParts(parts = []) {
-  const state = { open: false };
-  return Array.from(parts, (part) => quoteFlagForPart(part, state));
+  const list = Array.from(parts, (part) => String(part));
+  const { quoted } = findQuotedParts(list.flatMap((part, i) => (i ? [" ", part] : [part])));
+  return list.map((_, i) => quoted[i * 2]);
 }
 
 /**
