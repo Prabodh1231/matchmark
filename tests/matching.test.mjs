@@ -24,6 +24,8 @@ import {
   findReferenceSections,
   referenceBlockFlags,
   markQuotedParts,
+  findQuotedParts,
+  continuesQuotation,
   exclusionSummary,
   findWindowMatchesWithPositions,
   findTrigramPositions,
@@ -409,6 +411,72 @@ test("quoted parts are tracked across straight and curly quotation marks", () =>
     markQuotedParts(['"alpha', 'beta"', "gamma", "“delta", "epsilon”", "zeta"]),
     [true, true, false, true, true, false]
   );
+});
+
+/* Quotation marks: apostrophes, elisions, inch marks, nesting, unmatched marks */
+
+// The words of a sentence that read as quoted
+const quotedWords = (sentence) => {
+  const parts = sentence.split(/\s+/);
+  const flags = markQuotedParts(parts);
+  return parts.filter((_, i) => flags[i]).join(" ");
+};
+
+test("an apostrophe inside a quotation does not end it", () => {
+  assert.equal(
+    quotedWords("“I don’t think the council’s plan will work,” she said, and the meeting ended."),
+    "“I don’t think the council’s plan will work,”"
+  );
+  assert.equal(quotedWords("He said \"it's O'Brien's turn\" and sat down."), "\"it's O'Brien's turn\"");
+});
+
+test("elisions, possessives and inch marks open nothing", () => {
+  for (const sentence of [
+    "In the ‘90s the port grew quickly and the city expanded along the river.",
+    "In the ’90s the port grew quickly and the city expanded along the river.",
+    "In the '90s the port grew quickly and the city expanded along the river.",
+    "The students’ work was strong, and the teachers’ notes were brief.",
+    'The 12" pipe failed. Engineers replaced it and the district stayed dry.',
+    "The 6\" valve and the 12\" pipe were both replaced.",
+  ]) {
+    assert.equal(quotedWords(sentence), "", sentence);
+  }
+});
+
+test("a single quotation inside a double one is nested", () => {
+  assert.equal(
+    quotedWords("“He said ‘yes’ and left the room,” she wrote later."),
+    "“He said ‘yes’ and left the room,”"
+  );
+  assert.equal(quotedWords("She called it 'the plan' twice."), "'the plan'");
+});
+
+test("an unmatched quotation mark hides nothing", () => {
+  assert.equal(quotedWords("He called it “the plan and then left the meeting early."), "");
+  assert.equal(quotedWords('The memo said "see attached and nothing more.'), "");
+  // A closed quotation later in the paragraph still counts
+  assert.equal(quotedWords("A stray “ mark, then a real “quoted phrase” here."), "“quoted phrase”");
+});
+
+test("quotation marks are read across pieces with no space between them", () => {
+  // Text split over several runs (bold, italics) arrives in separate pieces
+  const { quoted } = findQuotedParts(["“", "quoted", "”", " ", "after", " ", '"', "word", '"', " ", "end"]);
+  assert.deepEqual(
+    quoted.map((flag, i) => (flag ? i : -1)).filter((i) => i >= 0),
+    [1, 7]
+  );
+});
+
+test("a quotation over several paragraphs is left open for the next paragraph", () => {
+  const first = findQuotedParts(["“The", " ", "first", " ", "paragraph."]);
+  assert.deepEqual(first.quoted, [false, false, false, false, false]);
+  assert.deepEqual(first.unclosed, [true, false, true, false, true]);
+  assert.ok(continuesQuotation("“The second paragraph ends here.”"));
+  assert.ok(continuesQuotation('  "Straight opening'));
+  assert.ok(!continuesQuotation("A plain paragraph."));
+  assert.ok(!continuesQuotation('" spaced mark'));
+  // Single quotations do not run over paragraphs
+  assert.deepEqual(findQuotedParts(["‘open", " ", "single"]).unclosed, [false, false, false]);
 });
 
 test("excluded words are removed by finalizeMatches and left out of the count", () => {

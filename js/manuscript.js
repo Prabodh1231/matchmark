@@ -1,10 +1,12 @@
 import {
   cleanWord,
-  quoteFlagForPart,
+  continuesQuotation,
+  findQuotedParts,
   referenceBlockFlags,
 } from "./matching.js";
 
-// Elements that hold a run of text: what reference-list detection looks at
+// Elements that hold a run of text: the paragraphs that reference-list and
+// quotation detection work on
 const BLOCK_SELECTOR = "h1, h2, h3, h4, h5, h6, p, li";
 
 /**
@@ -59,12 +61,43 @@ export function buildManuscript(html) {
   let pendingGap = null; // whitespace after a word, waiting for the next word (may cross nodes)
   let afterWord = false; // whether the previous emitted token was a word
   let inReferenceList = false; // whether the current block is part of a reference list
-  const quoteState = { open: false }; // inside “…” / "…" quotation marks
+
+  // Quotation marks are matched within each paragraph (findQuotedParts in
+  // matching.js), so an unmatched mark never hides text past its paragraph.
+  // Each paragraph's text is collected piece by piece, with the word id each
+  // piece became, and flagged once the paragraph is complete.
+  let paragraph = { block: undefined, pieces: [], ids: [] };
+  let unclosedBefore = []; // word ids the previous paragraph left inside an open quotation
+  const finishParagraph = () => {
+    const { pieces, ids } = paragraph;
+    paragraph = { block: undefined, pieces: [], ids: [] };
+    const text = pieces.join("");
+    if (!/\S/.test(text)) return; // an empty paragraph doesn't end a running quotation
+    // A quotation over several paragraphs reopens on each one
+    if (continuesQuotation(text)) for (const id of unclosedBefore) words[id].inQuotedText = true;
+    unclosedBefore = [];
+    const { quoted, unclosed } = findQuotedParts(pieces);
+    ids.forEach((id, i) => {
+      if (id === null) return;
+      if (quoted[i]) words[id].inQuotedText = true;
+      else if (unclosed[i]) unclosedBefore.push(id);
+    });
+  };
+  const addPiece = (text, id = null) => {
+    paragraph.pieces.push(text);
+    paragraph.ids.push(id);
+  };
 
   for (const node of textNodes) {
-    // Text outside any block keeps the flag of the block before it
+    // Text outside any block belongs to the block before it
     const block = blockIndex.get(node.parentElement?.closest(BLOCK_SELECTOR));
-    if (block !== undefined) inReferenceList = referenceFlags[block];
+    if (block !== undefined) {
+      inReferenceList = referenceFlags[block];
+      if (block !== paragraph.block) {
+        finishParagraph();
+        paragraph.block = block;
+      }
+    }
     let inQuotedBlock = false;
     for (let el = node.parentElement; el && el !== root; el = el.parentElement) {
       if (el.tagName === "BLOCKQUOTE" || el.tagName === "Q") inQuotedBlock = true;
@@ -75,6 +108,7 @@ export function buildManuscript(html) {
       if (!part) continue;
 
       if (/^\s+$/.test(part)) {
+        addPiece(part);
         if (pendingGap) {
           pendingGap.el.textContent += part;
         } else if (afterWord) {
@@ -91,9 +125,9 @@ export function buildManuscript(html) {
         continue;
       }
 
-      const quotedByMarks = quoteFlagForPart(part, quoteState);
       const content = cleanWord(part);
       if (!/[\p{L}\p{N}]/u.test(content)) {
+        addPiece(part); // punctuation only, but it may hold a quotation mark
         pendingGap = null;
         afterWord = false;
         fragment.append(part);
@@ -101,15 +135,17 @@ export function buildManuscript(html) {
       }
 
       const id = words.length;
+      addPiece(part, id);
       const span = document.createElement("span");
       span.className = "w";
       span.dataset.i = id;
       span.textContent = part;
+      // Quotation marks add inQuotedText when the paragraph is finished
       words.push({
         id,
         content,
         ...(inReferenceList ? { inReferenceList: true } : {}),
-        ...(inQuotedBlock || quotedByMarks ? { inQuotedText: true } : {}),
+        ...(inQuotedBlock ? { inQuotedText: true } : {}),
       });
       spans.push(span);
       fragment.append(span);
@@ -122,6 +158,7 @@ export function buildManuscript(html) {
     }
     node.replaceWith(fragment);
   }
+  finishParagraph();
 
   return { root, words, spans, gaps };
 }
