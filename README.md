@@ -246,7 +246,9 @@ All steps live in [js/matching.js](js/matching.js).
    Apostrophes and hyphens inside a word join it ("don't" → `dont`,
    "state-of-the-art" → `stateoftheart`), and so does a line-break hyphen in a
    PDF. The manuscript is split by the same rule (`splitWords`), so both
-   sides see the same words.
+   sides see the same words. Ligatures and other compatibility forms are
+   unfolded first, so a PDF's "ﬁnancial" or "buﬀer" (single ligature
+   characters) reads as "financial" or "buffer", as do full-width letters.
 2. **Window overlap (main signal).** The manuscript is cut into overlapping
    13-word windows and each PDF into 11-word windows. Repeated words count once,
    but every occurrence is remembered. When a manuscript window and a PDF window

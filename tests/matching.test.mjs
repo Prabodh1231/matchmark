@@ -81,6 +81,29 @@ test("punctuation between words separates them; apostrophes and hyphens join", (
   assert.equal(cleanWord("हिन्दी भाषा"), "हिन्दी भाषा");
 });
 
+test("ligatures and other compatibility forms read as their plain letters", () => {
+  assert.equal(cleanWord("ﬁnancial ﬂows through the oﬃce buﬀer"), "financial flows through the office buffer");
+  assert.deepEqual(tokenizeText("Scientiﬁc ﬁndings"), tokenizeText("Scientific findings"));
+  assert.equal(cleanWord("ＦＵＬＬ width"), "full width");
+  // Accents are still stripped after unfolding
+  assert.equal(cleanWord("Naïve ﬁancée"), "naive fiancee");
+  // The modifier-letter apostrophe joins like any other apostrophe
+  assert.equal(cleanWord("donʼt"), "dont");
+  for (const part of ["ﬁnancial,", "“oﬃce—buﬀer”", "donʼt"]) {
+    assert.deepEqual(splitWords(part).filter((piece) => piece.word).map((piece) => piece.word), tokenizeText(part), part);
+  }
+});
+
+test("a draft with ligatures matches a source without them", () => {
+  const manuscript = toWords("Mangrove restoration is a low cost buﬀer that also supports ﬁsheries and stores carbon");
+  const windows = createDocxWindows(manuscript);
+  const source = tokenizeText("Mangrove restoration is a low cost buffer that also supports fisheries and stores carbon");
+  const ids = new Set(findWindowMatches(windows, buildWindowIndex(windows), source));
+  for (const word of ["buffer", "fisheries"]) {
+    assert.ok(ids.has(manuscript.find((w) => w.content === word).id), word);
+  }
+});
+
 test("source text splits on dashes and slashes as spaced text does", () => {
   const glued = tokenizeText("The flood—which nobody predicted—and/or the storm");
   assert.deepEqual(glued, ["the", "flood", "which", "nobody", "predicted", "and", "or", "the", "storm"]);
