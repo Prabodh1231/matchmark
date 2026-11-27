@@ -3,6 +3,7 @@ import {
   continuesQuotation,
   findQuotedParts,
   referenceBlockFlags,
+  splitWords,
 } from "./matching.js";
 
 // Elements that hold a run of text: the paragraphs that reference-list and
@@ -125,8 +126,8 @@ export function buildManuscript(html) {
         continue;
       }
 
-      const content = cleanWord(part);
-      if (!/[\p{L}\p{N}]/u.test(content)) {
+      const pieces = splitWords(part);
+      if (!pieces.some((piece) => piece.word)) {
         addPiece(part); // punctuation only, but it may hold a quotation mark
         pendingGap = null;
         afterWord = false;
@@ -134,27 +135,43 @@ export function buildManuscript(html) {
         continue;
       }
 
-      const id = words.length;
-      addPiece(part, id);
-      const span = document.createElement("span");
-      span.className = "w";
-      span.dataset.i = id;
-      span.textContent = part;
-      // Quotation marks add inQuotedText when the paragraph is finished
-      words.push({
-        id,
-        content,
-        ...(inReferenceList ? { inReferenceList: true } : {}),
-        ...(inQuotedBlock ? { inQuotedText: true } : {}),
-      });
-      spans.push(span);
-      fragment.append(span);
-      afterWord = true;
+      // A part can hold several words ("flood—which", "and/or"), split
+      // exactly as source text is: each word gets its own span, and the
+      // punctuation between two words a gap, so one passage can bridge it
+      for (const { text, word } of pieces) {
+        if (!word) {
+          addPiece(text);
+          const el = document.createElement("span");
+          el.className = "gap";
+          el.textContent = text;
+          el.dataset.left = words.length - 1;
+          pendingGap = { el, left: words.length - 1 };
+          fragment.append(el);
+          continue;
+        }
 
-      if (pendingGap) {
-        gaps.push({ ...pendingGap, right: id });
-        pendingGap = null;
+        const id = words.length;
+        addPiece(text, id);
+        const span = document.createElement("span");
+        span.className = "w";
+        span.dataset.i = id;
+        span.textContent = text;
+        // Quotation marks add inQuotedText when the paragraph is finished
+        words.push({
+          id,
+          content: word,
+          ...(inReferenceList ? { inReferenceList: true } : {}),
+          ...(inQuotedBlock ? { inQuotedText: true } : {}),
+        });
+        spans.push(span);
+        fragment.append(span);
+
+        if (pendingGap) {
+          gaps.push({ ...pendingGap, right: id });
+          pendingGap = null;
+        }
       }
+      afterWord = true;
     }
     node.replaceWith(fragment);
   }

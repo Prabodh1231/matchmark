@@ -240,7 +240,13 @@ found, so a stray or unmatched mark never hides the text after it.
 
 All steps live in [js/matching.js](js/matching.js).
 
-1. **Clean.** Text is lowercased and stripped of accents and punctuation.
+1. **Clean.** Text is split into words and each word is lowercased and
+   stripped of accents. Punctuation between two words separates them, so
+   "flood—which" and "and/or" are two words each, as "flood — which" is.
+   Apostrophes and hyphens inside a word join it ("don't" → `dont`,
+   "state-of-the-art" → `stateoftheart`), and so does a line-break hyphen in a
+   PDF. The manuscript is split by the same rule (`splitWords`), so both
+   sides see the same words.
 2. **Window overlap (main signal).** The manuscript is cut into overlapping
    13-word windows and each PDF into 11-word windows. Repeated words count once,
    but every occurrence is remembered. When a manuscript window and a PDF window

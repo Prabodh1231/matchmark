@@ -6,6 +6,7 @@ import {
   isDefaultSettings,
   finalizeMatches,
   cleanWord,
+  splitWords,
   tokenizeText,
   createDocxWindows,
   buildWindowIndex,
@@ -59,9 +60,49 @@ function rng(seed) {
 }
 
 test("cleanWord strips accents, punctuation and case", () => {
-  assert.equal(cleanWord("  Café, Naïve—RÉSUMÉ!\n"), "cafe naiveresume");
+  assert.equal(cleanWord("  Café, Naïve—RÉSUMÉ!\n"), "cafe naive resume");
   assert.equal(cleanWord("line\nbreak\ttab"), "line break tab");
   assert.equal(cleanWord("—"), "");
+});
+
+test("punctuation between words separates them; apostrophes and hyphens join", () => {
+  // Dashes, slashes and stops separate, with or without spaces around them
+  assert.equal(cleanWord("the flood—which nobody predicted"), "the flood which nobody predicted");
+  assert.equal(cleanWord("and/or"), "and or");
+  assert.equal(cleanWord("1990–2010"), "1990 2010");
+  assert.equal(cleanWord("e.g. this"), "e g this");
+  // Apostrophes, hyphens inside a word, the soft hyphen and joiners hold it together
+  assert.equal(cleanWord("Don't don’t O’Brien’s ‘90s"), "dont dont obriens 90s");
+  assert.equal(cleanWord("state-of-the-art rock-'n'-roll"), "stateoftheart rocknroll");
+  assert.equal(cleanWord("hyphen­ation"), "hyphenation");
+  // A hyphen with nothing on one side is punctuation
+  assert.equal(cleanWord("pre- and post-war -5"), "pre and postwar 5");
+  // Combining marks of other scripts stay in their word
+  assert.equal(cleanWord("हिन्दी भाषा"), "हिन्दी भाषा");
+});
+
+test("source text splits on dashes and slashes as spaced text does", () => {
+  const glued = tokenizeText("The flood—which nobody predicted—and/or the storm");
+  assert.deepEqual(glued, ["the", "flood", "which", "nobody", "predicted", "and", "or", "the", "storm"]);
+  assert.deepEqual(tokenizeText("The flood — which nobody predicted — and / or the storm"), glued);
+  // A line-break hyphen still joins the halves of a word
+  assert.deepEqual(tokenizeText("exam-\nple"), ["example"]);
+});
+
+test("splitWords splits a manuscript part into words exactly as tokenizeText does", () => {
+  assert.deepEqual(splitWords("“flood—which,”"), [
+    { text: "“flood", word: "flood" },
+    { text: "—", word: "" },
+    { text: "which,”", word: "which" },
+  ]);
+  assert.deepEqual(splitWords("don’t"), [{ text: "don’t", word: "dont" }]);
+  assert.deepEqual(splitWords("—"), [{ text: "—", word: "" }]);
+  // Pieces join back into the part, and their words are the part's tokens
+  for (const part of ["(see—p.", "and/or", "“It’s", "state-of-the-art,", "1990–2010.", "a--b", "‘’", "x-'y'-z", "Naïve—RÉSUMÉ!"]) {
+    const pieces = splitWords(part);
+    assert.equal(pieces.map((piece) => piece.text).join(""), part, part);
+    assert.deepEqual(pieces.filter((piece) => piece.word).map((piece) => piece.word), tokenizeText(part), part);
+  }
 });
 
 test("stop words are stored in cleaned form", () => {
