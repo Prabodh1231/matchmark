@@ -1675,7 +1675,7 @@ const TUNING_CONTROLS = [
     key: "ignoreReferenceList",
     type: "check",
     label: "Ignore the reference list",
-    hint: "Everything from a References, Bibliography, Works Cited, Reference List, Sources or Literature Cited heading onwards stays visible but is never highlighted or counted.",
+    hint: "A section headed References, Bibliography, Works Cited, Reference List, Sources or Literature Cited, whose entries read as citations, stays visible but is never highlighted or counted.",
   },
   {
     key: "ignoreQuotedText",

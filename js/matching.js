@@ -19,7 +19,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   phraseGate: 21, // trigrams a source must share before any count
   phrasesUniqueOnly: true, // credit only trigrams found in exactly one source
   dropLoneStopWords: true, // unflag stop words with no flagged neighbour
-  ignoreReferenceList: true, // exclude everything from a References/Bibliography heading on
+  ignoreReferenceList: true, // exclude a References/Bibliography section whose entries read as citations
   ignoreQuotedText: false, // exclude quotation-mark and blockquote text
   moderateFrom: 10, // overall % where "moderate" starts
   highFrom: 25, // overall % where "high" starts
@@ -80,23 +80,162 @@ export function isReferenceHeadingText(text = "") {
 }
 
 /**
+ * A manuscript block (heading, paragraph or list item) as the reference-list
+ * rules see it. `lines` is the block's text split at line breaks, for
+ * reference lists typed as one paragraph with a break after each entry.
+ * @typedef {{tagName?: string, tag?: string, text?: string, lines?: string[],
+ *   bold?: boolean, isBold?: boolean, allBold?: boolean}} Block
+ */
+
+const blockShape = (block = {}) => ({
+  tag: String(block.tagName || block.tag || "").toLowerCase(),
+  text: String(block.text || ""),
+  bold: Boolean(block.bold ?? block.isBold ?? block.allBold),
+});
+
+const countWords = (text) => cleanWord(String(text)).split(" ").filter(Boolean).length;
+
+// A paragraph that is entirely bold and at most this long reads as a heading
+const MAX_BOLD_HEADING_WORDS = 12;
+
+/**
  * Whether a block looks like a reference-list heading: any heading element,
  * or a short standalone paragraph whose text is entirely bold.
- * @param {{tagName?: string, tag?: string, text?: string, bold?: boolean, isBold?: boolean, allBold?: boolean}} block
+ * @param {Block} block
  */
 export function isReferenceHeadingBlock(block = {}) {
-  if (!isReferenceHeadingText(block.text || "")) return false;
-  const tag = String(block.tagName || block.tag || "").toLowerCase();
+  const { tag, text, bold } = blockShape(block);
+  if (!isReferenceHeadingText(text)) return false;
   if (/^h[1-6]$/.test(tag)) return true;
-  if (tag !== "p") return false;
-  const bold = Boolean(block.bold ?? block.isBold ?? block.allBold);
-  const wordCount = cleanWord(block.text || "").split(" ").filter(Boolean).length;
-  return bold && wordCount <= 6;
+  return tag === "p" && bold && countWords(text) <= 6;
 }
 
-/** Index of the first reference-list heading block, or -1. */
-export function findReferenceHeadingIndex(blocks = []) {
-  return Array.from(blocks).findIndex((block) => isReferenceHeadingBlock(block));
+/**
+ * Whether a block reads as a heading of any kind: a heading element with
+ * text, or a short paragraph that is entirely bold.
+ * @param {Block} block
+ */
+export function isHeadingLikeBlock(block = {}) {
+  const { tag, text, bold } = blockShape(block);
+  const words = countWords(text);
+  if (words === 0) return false;
+  if (/^h[1-6]$/.test(tag)) return true;
+  return tag === "p" && bold && words <= MAX_BOLD_HEADING_WORDS;
+}
+
+/* What makes a line read as a reference-list entry */
+const YEAR = /(?:^|\D)(?:1[5-9]|20)\d{2}[a-z]?(?!\d)|\bn\.\s?d\./i;
+const LINK = /\bdoi\b|\b10\.\d{4,9}\/|https?:\/\/|\bwww\./i;
+const ET_AL = /\bet al\b/i;
+const BIBLIOGRAPHIC =
+  /\b(?:pp?|vols?|nos?|eds?|edn|trans)\.(?=\s|\d|$)|\b(?:journal|proceedings|press|publishers?|retrieved|accessed|available at)\b|\bin:/i;
+// How entries open: "[1]", "1.", "Smith, J.", "Smith, John.", "J. Smith",
+// "Smith JA," or "Organisation. (2021)." Running prose rarely opens like this.
+const ENTRY_OPENINGS = [
+  String.raw`\[\d+\]`, // [1]
+  String.raw`\d+[.)]\s`, // 1.  or  1)
+  String.raw`\p{Lu}[\p{L}'’-]+(?:\s\p{Lu}[\p{L}'’-]+)*,\s*(?:\p{Lu}\.|\p{Lu}[\p{L}'’-]+[.,])`, // Smith, J. / Smith, John.
+  String.raw`(?:\p{Lu}\.\s?)+\p{Lu}[\p{L}'’-]+`, // J. Smith
+  String.raw`\p{Lu}[\p{L}'’-]+\s\p{Lu}{1,3}[.,]`, // Smith JA,
+  // Organisation. (2021).  or  Organisation. 2021.  ("et al." is not an organisation)
+  String.raw`(?:(?!et al\.)[^.]){2,80}\.\s*(?:\((?:1[5-9]|20)\d{2}[a-z]?\)|(?:1[5-9]|20)\d{2}[a-z]?\.)`,
+];
+const ENTRY_OPENING = new RegExp(String.raw`^\s*(?:${ENTRY_OPENINGS.join("|")})`, "u");
+// Entries longer than this are prose (or an annotation), not a citation
+const MAX_CITATION_WORDS = 100;
+
+/**
+ * Whether one line of text reads as a reference-list entry: it opens like
+ * an entry (or carries a DOI or web address) and shows at least two
+ * bibliographic signals out of: that opening, a year or "n.d.", a DOI or
+ * web address, "et al." and words such as "pp.", "vol.", "Journal", "Press".
+ * A body sentence that cites a work ("Smith et al. (2019) found…") does not
+ * open like an entry, so it does not count.
+ * @param {string} text
+ */
+export function looksLikeCitation(text = "") {
+  const value = String(text);
+  const words = countWords(value);
+  if (words < 3 || words > MAX_CITATION_WORDS) return false;
+  const opensLikeEntry = ENTRY_OPENING.test(value);
+  if (!opensLikeEntry && !LINK.test(value)) return false;
+  const signals = [YEAR, LINK, ET_AL, BIBLIOGRAPHIC].filter((signal) => signal.test(value)).length;
+  return signals + (opensLikeEntry ? 1 : 0) >= 2;
+}
+
+// Share of a section's entries that must read as citations
+const REFERENCE_SHARE = 0.6;
+// Inside a reference list, a paragraph longer than this that doesn't read
+// as citations is prose (an appended passage, a note) and is still counted
+const MAX_UNRECOGNISED_ENTRY_WORDS = 25;
+
+/** A block's non-empty lines: its text, or each line where it has breaks. */
+function blockEntries(block = {}) {
+  const lines = Array.isArray(block.lines) && block.lines.length ? block.lines : [blockShape(block).text];
+  return lines.map(String).filter((line) => countWords(line) > 0);
+}
+
+const readsAsReferences = (entries) =>
+  entries.length > 0 &&
+  entries.filter((entry) => looksLikeCitation(entry)).length >= entries.length * REFERENCE_SHARE;
+
+/**
+ * Finds the reference lists in a manuscript. A reference list starts at a
+ * reference heading (see isReferenceHeadingBlock) and holds only if the
+ * entries under it read as citations, so a stray "References" line or a
+ * body section titled "Sources" excludes nothing. It runs on through
+ * subheadings ("Primary sources") whose entries also read as citations, and
+ * stops at the first heading whose section doesn't (an appendix, the next
+ * chapter). Every such list is found, not just the first.
+ * @param {Block[]} blocks - In document order
+ * @returns {Array<{start: number, end: number}>} Block index ranges, end exclusive
+ */
+export function findReferenceSections(blocks = []) {
+  const list = Array.from(blocks);
+  const sections = [];
+  for (let i = 0; i < list.length; i++) {
+    if (!isReferenceHeadingBlock(list[i])) continue;
+    let end = -1;
+    // Walk the parts between headings: each must read as citations
+    for (let at = i + 1; at < list.length; ) {
+      let next = at;
+      while (next < list.length && !isHeadingLikeBlock(list[next])) next++;
+      const entries = list.slice(at, next).flatMap(blockEntries);
+      if (entries.length > 0) {
+        if (!readsAsReferences(entries)) break;
+        end = next;
+      }
+      at = next + 1; // past the heading that closed this part
+    }
+    if (end > i) {
+      sections.push({ start: i, end });
+      i = end - 1;
+    }
+  }
+  return sections;
+}
+
+/**
+ * Which blocks belong to a reference list (see findReferenceSections). A
+ * longer paragraph inside a list that doesn't read as citations stays
+ * counted, so text pasted under a real reference list is still checked.
+ * @param {Block[]} blocks - In document order
+ * @returns {boolean[]} One flag per block
+ */
+export function referenceBlockFlags(blocks = []) {
+  const list = Array.from(blocks);
+  const flags = new Array(list.length).fill(false);
+  for (const { start, end } of findReferenceSections(list)) {
+    for (let i = start; i < end; i++) {
+      const block = list[i];
+      const prose =
+        !isHeadingLikeBlock(block) &&
+        countWords(blockShape(block).text) > MAX_UNRECOGNISED_ENTRY_WORDS &&
+        !readsAsReferences(blockEntries(block));
+      flags[i] = !prose;
+    }
+  }
+  return flags;
 }
 
 /**
