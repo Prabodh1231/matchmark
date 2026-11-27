@@ -19,7 +19,10 @@ import {
   similarityLevel,
   isReferenceHeadingText,
   isReferenceHeadingBlock,
-  findReferenceHeadingIndex,
+  isHeadingLikeBlock,
+  looksLikeCitation,
+  findReferenceSections,
+  referenceBlockFlags,
   markQuotedParts,
   exclusionSummary,
   findWindowMatchesWithPositions,
@@ -293,13 +296,112 @@ test("reference headings are recognised by normalised text and block shape", () 
   assert.ok(isReferenceHeadingBlock({ tagName: "p", text: "Works Cited", bold: true }));
   assert.ok(!isReferenceHeadingBlock({ tagName: "p", text: "Works Cited", bold: false }));
   assert.ok(!isReferenceHeadingBlock({ tagName: "p", text: "Sources of inspiration for this long chapter title", bold: true }));
-  assert.equal(
-    findReferenceHeadingIndex([
-      { tagName: "p", text: "An ordinary paragraph" },
-      { tagName: "h3", text: "Literature Cited" },
-    ]),
-    1
-  );
+  assert.ok(isHeadingLikeBlock({ tagName: "h3", text: "Appendix A" }));
+  assert.ok(isHeadingLikeBlock({ tagName: "p", text: "Primary sources", bold: true }));
+  assert.ok(!isHeadingLikeBlock({ tagName: "p", text: "Primary sources" }));
+  assert.ok(!isHeadingLikeBlock({ tagName: "h2", text: " " }));
+});
+
+/* Reference lists: a reference heading counts only when citations follow it */
+
+const REFERENCE_ENTRIES = [
+  // APA, MLA, an organisation with a web address, IEEE, Vancouver, Chicago author-date
+  "Smith, J. A., & Lee, K. (2019). Coastal flooding in delta cities. Journal of Water Policy, 12(3), 45–67. https://doi.org/10.1000/xyz123",
+  "Okafor, Ngozi. Living with Water. Oxford University Press, 2021.",
+  "Environment Agency. (2021). Flood risk maps for England. Retrieved from https://www.gov.uk/flood-maps",
+  "J. Smith and K. Lee, “Tidal gauges,” IEEE Trans. Geosci., vol. 3, no. 2, pp. 1–10, 2018.",
+  "Smith J, Lee K. Mangrove buffers. J Coast Res. 2020;36(2):101-9.",
+  "Brown, Alice. 2017. Harbour Records of the North Sea. London: Routledge.",
+];
+const BODY =
+  "Across the developing world, coastal infrastructure faces a serious threat because sea levels are " +
+  "rising now, and storm surges that once arrived every fifty years are projected to occur every decade " +
+  "by the middle of the century.";
+const SHORT_BODY = "The council has piloted two small sites along the estuary.";
+const h = (level, text) => ({ tagName: `h${level}`, text });
+const p = (text, extra = {}) => ({ tagName: "p", text, ...extra });
+const flagged = (blocks) => referenceBlockFlags(blocks).flatMap((flag, i) => (flag ? [i] : []));
+
+test("citations in common styles read as reference entries; body sentences do not", () => {
+  for (const entry of REFERENCE_ENTRIES) assert.ok(looksLikeCitation(entry), entry);
+  for (const sentence of [
+    BODY,
+    SHORT_BODY,
+    "Smith et al. (2019) found that mangroves reduce wave heights by a third.",
+    "However, Smith (2019) argued that the levee was too low for the 2020 surge.",
+    "In 2019, the council published its first flood plan.",
+    "References",
+  ]) {
+    assert.ok(!looksLikeCitation(sentence), sentence);
+  }
+});
+
+test("a reference list at the end is found, from its heading to the end", () => {
+  const blocks = [h(1, "Living With Water"), p(BODY), h(2, "Responses"), p(BODY), h(2, "References"), ...REFERENCE_ENTRIES.map((e) => p(e))];
+  assert.deepEqual(findReferenceSections(blocks), [{ start: 4, end: blocks.length }]);
+  assert.deepEqual(flagged(blocks), [4, 5, 6, 7, 8, 9, 10]);
+});
+
+test("a stray reference heading above body text excludes nothing", () => {
+  // A bold "References" line near the top used to hide the whole draft
+  const blocks = [h(1, "Living With Water"), p(SHORT_BODY), p("References", { bold: true }), h(2, "The problem"), p(BODY), p(BODY), h(2, "Responses"), p(BODY)];
+  assert.deepEqual(findReferenceSections(blocks), []);
+  assert.deepEqual(flagged(blocks), []);
+});
+
+test("a body section titled Sources is still counted", () => {
+  const blocks = [h(1, "Living With Water"), p(BODY), h(2, "Sources"), p(BODY), p(SHORT_BODY), h(2, "Conclusion"), p(BODY)];
+  assert.deepEqual(flagged(blocks), []);
+});
+
+test("a reference list ends at the next heading whose section is not citations", () => {
+  const blocks = [h(2, "References"), p(REFERENCE_ENTRIES[0]), p(REFERENCE_ENTRIES[1]), h(2, "Appendix A: Survey questions"), p(BODY), p(SHORT_BODY)];
+  assert.deepEqual(flagged(blocks), [0, 1, 2]);
+});
+
+test("a reference list continues through subheadings that hold citations", () => {
+  const blocks = [
+    h(2, "Bibliography"),
+    p("Primary sources", { bold: true }),
+    p(REFERENCE_ENTRIES[0]),
+    p(REFERENCE_ENTRIES[1]),
+    h(3, "Secondary sources"),
+    p(REFERENCE_ENTRIES[2]),
+    { tagName: "LI", text: REFERENCE_ENTRIES[3] },
+  ];
+  assert.deepEqual(flagged(blocks), [0, 1, 2, 3, 4, 5, 6]);
+});
+
+test("prose pasted under a real reference list is still counted", () => {
+  const blocks = [h(2, "References"), p(REFERENCE_ENTRIES[0]), p(REFERENCE_ENTRIES[1]), p(REFERENCE_ENTRIES[2]), p(BODY)];
+  assert.deepEqual(flagged(blocks), [0, 1, 2, 3]);
+});
+
+test("a reference list typed as one paragraph is read line by line", () => {
+  const blocks = [h(2, "Works Cited"), p(REFERENCE_ENTRIES.join(" "), { lines: REFERENCE_ENTRIES })];
+  assert.deepEqual(flagged(blocks), [0, 1]);
+});
+
+test("every reference list is found, and only real ones", () => {
+  const blocks = [
+    h(1, "Chapter 1"),
+    p(BODY),
+    p("References", { bold: true }), // stray: body text follows
+    h(2, "The problem"),
+    p(BODY),
+    h(2, "References"),
+    p(REFERENCE_ENTRIES[0]),
+    p(REFERENCE_ENTRIES[1]),
+    h(1, "Chapter 2"),
+    p(BODY),
+    h(2, "Literature Cited"),
+    p(REFERENCE_ENTRIES[4]),
+    p(REFERENCE_ENTRIES[5]),
+  ];
+  assert.deepEqual(findReferenceSections(blocks), [
+    { start: 5, end: 8 },
+    { start: 10, end: 13 },
+  ]);
 });
 
 test("quoted parts are tracked across straight and curly quotation marks", () => {

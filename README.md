@@ -177,7 +177,7 @@ app keeps each source's cleaned text after a comparison for this.
 | Phrases a source must share | 21 | Below this, a source's shared phrases are ignored |
 | Only phrases unique to one source | on | Off credits a shared phrase to every source containing it |
 | Ignore lone common words | on | Unmark a lone "the"/"of" next to a real passage |
-| Ignore the reference list | on | Everything from a References / Bibliography / Works Cited / Reference List / Sources / Literature Cited heading (a heading, or a short standalone bold paragraph) onwards is neither highlighted nor counted |
+| Ignore the reference list | on | A section headed References / Bibliography / Works Cited / Reference List / Sources / Literature Cited (a heading, or a short standalone bold paragraph) is neither highlighted nor counted, provided most of its entries read as citations (see below) |
 | Ignore quoted text | off | Words inside quotation marks or block quotes are neither highlighted nor counted |
 | Moderate from / High from | 10% / 25% | Where the level labels change; applied instantly, no re-match |
 
@@ -192,6 +192,31 @@ app keeps each source's cleaned text after a comparison for this.
   report always says how it was made.
 - Settings are checked and clamped (`normalizeSettings` in `js/matching.js`),
   so saved or impossible values can't break matching.
+
+### What counts as a reference list
+
+A reference heading on its own excludes nothing; the entries under it have to
+look like citations (`referenceBlockFlags` in `js/matching.js`). So a stray
+bold "References" line, or a body section titled "Sources", is still counted.
+
+- An entry reads as a citation when it opens like one ("Smith, J.",
+  "Smith, John.", "J. Smith", "Smith JA,", "[1]", "1.", or "Organisation.
+  (2021).") or carries a DOI or web address, and shows at least two of: that
+  opening, a year or "n.d.", a DOI or web address, "et al.", and words such as
+  "pp.", "vol.", "Journal", "Press" or "Retrieved". Entries over 100 words are
+  treated as prose. A sentence that cites a work ("Smith et al. (2019)
+  found…") doesn't open like an entry, so it doesn't count.
+- At least 60% of the entries under the heading must read as citations. A
+  list typed as one paragraph, with a line break after each entry, is read
+  entry by entry.
+- The list runs through subheadings ("Primary sources") whose entries also
+  read as citations, and ends at the first heading whose section doesn't, so
+  an appendix after it is still counted.
+- Inside a list, a paragraph of more than 25 words that doesn't read as
+  citations is still counted, so text pasted under a real reference list is
+  checked.
+- Every reference list in the manuscript is found, such as one at the end of
+  each chapter.
 
 ## How matching works
 

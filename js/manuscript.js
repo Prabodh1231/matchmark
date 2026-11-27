@@ -1,8 +1,11 @@
 import {
   cleanWord,
-  isReferenceHeadingBlock,
   quoteFlagForPart,
+  referenceBlockFlags,
 } from "./matching.js";
+
+// Elements that hold a run of text: what reference-list detection looks at
+const BLOCK_SELECTOR = "h1, h2, h3, h4, h5, h6, p, li";
 
 /**
  * Converts a DOCX file to sanitised HTML with Mammoth.
@@ -38,24 +41,12 @@ export function buildManuscript(html) {
   root.className = "manuscript-body";
   root.append(...Array.from(doc.body.childNodes, (node) => document.importNode(node, true)));
 
-  // The first reference-list heading (a heading element, or a short
-  // standalone bold paragraph) excludes everything from there on. Words
-  // keep the flag so the score can honour the setting without a re-read.
-  const isBoldParagraph = (el) => {
-    const boldText = Array.from(el.querySelectorAll("strong, b"))
-      .map((node) => cleanWord(node.textContent))
-      .join(" ")
-      .replace(/\s+/g, "");
-    return Boolean(boldText) && boldText === cleanWord(el.textContent).replace(/\s+/g, "");
-  };
-  const referenceStartElement =
-    Array.from(root.querySelectorAll("h1, h2, h3, h4, h5, h6, p")).find((el) =>
-      isReferenceHeadingBlock({
-        tagName: el.tagName,
-        text: el.textContent,
-        bold: el.tagName === "P" && isBoldParagraph(el),
-      })
-    ) || null;
+  // Reference lists: a References/Bibliography/... heading whose entries
+  // read as citations (see referenceBlockFlags in matching.js). Words keep
+  // the flag so the score can honour the setting without a re-read.
+  const blockElements = Array.from(root.querySelectorAll(BLOCK_SELECTOR));
+  const blockIndex = new Map(blockElements.map((el, i) => [el, i]));
+  const referenceFlags = referenceBlockFlags(describeBlocks(root, blockElements, blockIndex));
 
   const words = [];
   const spans = [];
@@ -67,11 +58,13 @@ export function buildManuscript(html) {
 
   let pendingGap = null; // whitespace after a word, waiting for the next word (may cross nodes)
   let afterWord = false; // whether the previous emitted token was a word
-  let inReferenceList = false; // everything from the reference heading on
+  let inReferenceList = false; // whether the current block is part of a reference list
   const quoteState = { open: false }; // inside “…” / "…" quotation marks
 
   for (const node of textNodes) {
-    if (referenceStartElement && referenceStartElement.contains(node)) inReferenceList = true;
+    // Text outside any block keeps the flag of the block before it
+    const block = blockIndex.get(node.parentElement?.closest(BLOCK_SELECTOR));
+    if (block !== undefined) inReferenceList = referenceFlags[block];
     let inQuotedBlock = false;
     for (let el = node.parentElement; el && el !== root; el = el.parentElement) {
       if (el.tagName === "BLOCKQUOTE" || el.tagName === "Q") inQuotedBlock = true;
@@ -131,6 +124,44 @@ export function buildManuscript(html) {
   }
 
   return { root, words, spans, gaps };
+}
+
+/** Whether every letter and digit of a paragraph is inside bold markup. */
+function isBoldParagraph(el) {
+  const boldText = Array.from(el.querySelectorAll("strong, b"))
+    .map((node) => cleanWord(node.textContent))
+    .join(" ")
+    .replace(/\s+/g, "");
+  return Boolean(boldText) && boldText === cleanWord(el.textContent).replace(/\s+/g, "");
+}
+
+/**
+ * Describes each block for reference-list detection: its own text (text in
+ * a nested block, such as a list inside a list item, belongs to the nested
+ * one), split into lines at <br>, so a list typed as one paragraph with a
+ * line break after each entry is read entry by entry.
+ * @param {HTMLElement} root
+ * @param {HTMLElement[]} elements - Blocks in document order
+ * @param {Map<HTMLElement, number>} blockIndex - Element -> position in elements
+ */
+function describeBlocks(root, elements, blockIndex) {
+  const lines = elements.map(() => [""]);
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const isText = node.nodeType === Node.TEXT_NODE;
+    if (!isText && node.tagName !== "BR") continue;
+    const at = blockIndex.get(node.parentElement?.closest(BLOCK_SELECTOR));
+    if (at === undefined) continue;
+    if (isText) lines[at][lines[at].length - 1] += node.data;
+    else lines[at].push("");
+  }
+  return elements.map((el, i) => ({
+    tagName: el.tagName,
+    text: lines[i].join(" "),
+    lines: lines[i],
+    bold: el.tagName === "P" && isBoldParagraph(el),
+  }));
 }
 
 // Mammoth emits plain markup, but links come from the file, so strip
